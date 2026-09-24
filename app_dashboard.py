@@ -1,5 +1,4 @@
 import io
-import os
 import unicodedata
 from pathlib import Path
 
@@ -22,18 +21,18 @@ st.set_page_config(
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(family="Inter, Segoe UI, sans-serif", color="#F1F5F9", size=13),
+    font=dict(family="Inter, Segoe UI, sans-serif", color="#111827", size=13),
     margin=dict(l=8, r=8, t=48, b=8),
     legend=dict(orientation="h", yanchor="bottom", y=-0.22, x=0),
-    hoverlabel=dict(bgcolor="#1E293B", font_color="#F1F5F9"),
-    xaxis=dict(gridcolor="#334155", zerolinecolor="#334155"),
-    yaxis=dict(gridcolor="#334155", zerolinecolor="#334155"),
+    hoverlabel=dict(bgcolor="#111827", font_color="#F9FAFB"),
+    xaxis=dict(gridcolor="#E5E7EB", zerolinecolor="#D1D5DB"),
+    yaxis=dict(gridcolor="#E5E7EB", zerolinecolor="#D1D5DB"),
 )
 
-COLOR_GASTO = "#F87171"
-COLOR_INGRESO = "#34D399"
-COLOR_NETO = "#60A5FA"
-DONUT_COLORS = ["#60A5FA", "#34D399", "#A78BFA", "#F87171", "#FBBF24", "#38BDF8", "#94A3B8", "#FB923C"]
+COLOR_GASTO = "#DC2626"
+COLOR_INGRESO = "#059669"
+COLOR_NETO = "#2563EB"
+DONUT_COLORS = ["#2563EB", "#059669", "#7C3AED", "#DC2626", "#D97706", "#0891B2", "#6B7280", "#EA580C"]
 
 
 def _norm_col(name: object) -> str:
@@ -46,17 +45,7 @@ def _colones(value: float) -> str:
     return f"₡{value:,.0f}"
 
 
-def _read_excel(source) -> pd.DataFrame:
-    if isinstance(source, (str, os.PathLike, Path)):
-        path = Path(source)
-        try:
-            return pd.read_excel(path)
-        except PermissionError:
-            return pd.read_excel(io.BytesIO(path.read_bytes()))
-    return pd.read_excel(source)
-
-
-@st.cache_data(show_spinner="Leyendo movimientos…")
+@st.cache_data(show_spinner="Leyendo movimientos…", max_entries=4)
 def load_transactions(file_bytes: bytes, filename: str) -> pd.DataFrame:
     buffer = io.BytesIO(file_bytes)
     if filename.lower().endswith(".csv"):
@@ -96,10 +85,13 @@ def load_transactions(file_bytes: bytes, filename: str) -> pd.DataFrame:
     df["Descripcion"] = df["Descripcion"].fillna("").astype(str).str.strip()
     df["Debitos"] = pd.to_numeric(df["Debitos"], errors="coerce").fillna(0.0)
     df["Creditos"] = pd.to_numeric(df["Creditos"], errors="coerce").fillna(0.0)
-    if "Balance" in df.columns:
-        df["Balance"] = pd.to_numeric(df["Balance"], errors="coerce")
     if "Referencia" not in df.columns:
         df["Referencia"] = ""
+    if "Balance" not in df.columns:
+        df["Balance"] = pd.NA
+
+    df["Referencia"] = df["Referencia"].fillna("").astype(str).str.strip()
+    df["Balance"] = pd.to_numeric(df["Balance"], errors="coerce")
 
     df["Categoria"] = [
         classify_transaction(desc, debit, credit)
@@ -107,9 +99,7 @@ def load_transactions(file_bytes: bytes, filename: str) -> pd.DataFrame:
     ]
     df["Tipo"] = ["Ingreso" if c > d else "Gasto" for d, c in zip(df["Debitos"], df["Creditos"])]
     df["Monto"] = df[["Debitos", "Creditos"]].max(axis=1)
-    df["Año"] = df["Fecha"].dt.year.astype(int)
     df["Mes"] = df["Fecha"].dt.to_period("M").astype(str)
-    df["MesNombre"] = df["Fecha"].dt.strftime("%Y-%m")
     return df.sort_values("Fecha").reset_index(drop=True)
 
 
@@ -174,7 +164,7 @@ def main() -> None:
         type=["xlsx", "xls", "csv"],
         key="uploaded_excel",
     )
-    if st.sidebar.button("Vaciar caché de datos"):
+    if st.sidebar.button("Vaciar caché de datos", icon=":material/refresh:"):
         st.cache_data.clear()
         st.rerun()
 
@@ -196,29 +186,41 @@ def main() -> None:
     min_date = df["Fecha"].min().date()
     max_date = df["Fecha"].max().date()
 
-    with st.container(border=True):
-        f1, f2, f3, f4 = st.columns([1.3, 1, 1.2, 1.4])
-        with f1:
-            rango = st.date_input(
-                "Rango de fechas",
-                value=(min_date, max_date),
-                min_value=min_date,
-                max_value=max_date,
-            )
-            if isinstance(rango, (list, tuple)) and len(rango) == 2:
-                date_from, date_to = rango
-            else:
-                date_from = date_to = rango if not isinstance(rango, (list, tuple)) else rango[0]
-        with f2:
-            tipo = st.segmented_control("Tipo", ["Todos", "Gastos", "Ingresos"], default="Todos")
-        with f3:
-            buscar = st.text_input("Buscar en descripción", placeholder="Ej. Uber, JPS, SINPE…")
-        with f4:
-            categorias = sorted(df["Categoria"].unique())
-            selected_cat = st.multiselect("Categoría (vacío = todas)", categorias)
+    with st.sidebar:
+        st.header(":material/filter_list: Filtros")
+        rango = st.date_input(
+            "Rango de fechas",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+            key="date_range",
+        )
+        tipo = st.segmented_control(
+            "Tipo",
+            ["Todos", "Gastos", "Ingresos"],
+            default="Todos",
+            key="transaction_type",
+        )
+        buscar = st.text_input(
+            "Buscar en descripción",
+            placeholder="Ej. Uber, JPS, SINPE…",
+            type="search",
+            key="description_search",
+        )
+        categorias = sorted(df["Categoria"].unique())
+        selected_cat = st.multiselect("Categoría (vacío = todas)", categorias, key="category_filter")
+        excluir_cajero = st.toggle("Excluir retiros de cajero del gasto", value=True, key="exclude_cash")
+        st.caption("Los retiros de efectivo no son un gasto: el dinero sigue en tu bolsillo.")
 
-    excluir_cajero = st.toggle("Excluir retiros de cajero del gasto", value=True)
-    st.caption("Los retiros de efectivo no son un gasto: el dinero sigue en tu bolsillo.")
+    if isinstance(rango, (list, tuple)):
+        if len(rango) == 2:
+            date_from, date_to = rango
+        elif len(rango) == 1:
+            date_from = date_to = rango[0]
+        else:
+            date_from, date_to = min_date, max_date
+    else:
+        date_from = date_to = rango
 
     if tipo is None:
         tipo = "Todos"
@@ -233,7 +235,7 @@ def main() -> None:
         filtered = filtered[filtered["Categoria"].isin(selected_cat)]
     if buscar.strip():
         q = buscar.strip().lower()
-        filtered = filtered[filtered["Descripcion"].str.lower().str.contains(q, na=False)]
+        filtered = filtered[filtered["Descripcion"].str.lower().str.contains(q, na=False, regex=False)]
     if excluir_cajero:
         filtered = filtered[filtered["Categoria"] != CAT_EFECTIVO]
 
@@ -248,7 +250,7 @@ def main() -> None:
     ahorro_pct = (neto / ingresos * 100) if ingresos else 0.0
     saldo = None
     if "Balance" in filtered.columns and filtered["Balance"].notna().any():
-        saldo = filtered.loc[filtered["Fecha"].idxmax(), "Balance"]
+        saldo = filtered["Balance"].dropna().iloc[-1]
 
     flujo = filtered.groupby("Mes", as_index=False)[["Debitos", "Creditos"]].sum()
     flujo["Neto"] = flujo["Creditos"] - flujo["Debitos"]
@@ -293,23 +295,25 @@ def main() -> None:
     left, right = st.columns(2)
     clicked_cats: set[str] = set()
     with left:
-        if not gastos_cat.empty:
-            fig_g = donut(gastos_cat["Categoria"], gastos_cat["Debitos"], "Gastos por categoría")
-            ev_g = st.plotly_chart(fig_g, width="stretch", on_select="rerun", key="pie_gastos", selection_mode="points")
-            for point in _chart_points(ev_g):
-                if point.get("label"):
-                    clicked_cats.add(point["label"])
-        else:
-            st.info("Sin gastos en el periodo.")
+        with st.container(border=True):
+            if not gastos_cat.empty:
+                fig_g = donut(gastos_cat["Categoria"], gastos_cat["Debitos"], "Gastos por categoría")
+                ev_g = st.plotly_chart(fig_g, width="stretch", on_select="rerun", key="pie_gastos", selection_mode="points")
+                for point in _chart_points(ev_g):
+                    if point.get("label"):
+                        clicked_cats.add(point["label"])
+            else:
+                st.info("Sin gastos en el periodo.")
     with right:
-        if not ingresos_cat.empty:
-            fig_i = donut(ingresos_cat["Categoria"], ingresos_cat["Creditos"], "Ingresos por categoría")
-            ev_i = st.plotly_chart(fig_i, width="stretch", on_select="rerun", key="pie_ingresos", selection_mode="points")
-            for point in _chart_points(ev_i):
-                if point.get("label"):
-                    clicked_cats.add(point["label"])
-        else:
-            st.info("Sin ingresos en el periodo.")
+        with st.container(border=True):
+            if not ingresos_cat.empty:
+                fig_i = donut(ingresos_cat["Categoria"], ingresos_cat["Creditos"], "Ingresos por categoría")
+                ev_i = st.plotly_chart(fig_i, width="stretch", on_select="rerun", key="pie_ingresos", selection_mode="points")
+                for point in _chart_points(ev_i):
+                    if point.get("label"):
+                        clicked_cats.add(point["label"])
+            else:
+                st.info("Sin ingresos en el periodo.")
 
     fig_bar = go.Figure()
     fig_bar.add_trace(
@@ -329,7 +333,8 @@ def main() -> None:
         )
     )
     fig_bar.update_layout(title="Flujo mensual", barmode="group", yaxis_title="Colones", **PLOTLY_LAYOUT)
-    ev_bar = st.plotly_chart(fig_bar, width="stretch", on_select="rerun", key="flujo_mes", selection_mode="points")
+    with st.container(border=True):
+        ev_bar = st.plotly_chart(fig_bar, width="stretch", on_select="rerun", key="flujo_mes", selection_mode="points")
 
     clicked_months: set[str] = set()
     clicked_types: set[str] = set()
@@ -343,65 +348,68 @@ def main() -> None:
             clicked_types.add("Ingreso")
 
     st.subheader("Promedio mensual por categoría")
-    tab_g, tab_i, tab_top = st.tabs(["Gastos", "Ingresos", "Comercios más frecuentes"])
-    with tab_g:
-        if not gastos_df.empty:
-            avg_g = (gastos_df.groupby("Categoria")["Debitos"].sum() / meses).reset_index(name="Promedio")
-            avg_g = avg_g.sort_values("Promedio")
-            fig = go.Figure(
-                go.Bar(
-                    y=avg_g["Categoria"],
-                    x=avg_g["Promedio"],
-                    orientation="h",
-                    marker_color=COLOR_GASTO,
-                    text=avg_g["Promedio"].map(_colones),
-                    textposition="outside",
-                    cliponaxis=False,
-                    hovertemplate="%{y}: ₡%{x:,.0f}<extra></extra>",
+    tab_g, tab_i, tab_top = st.tabs(["Gastos", "Ingresos", "Comercios más frecuentes"], on_change="rerun", key="monthly_tabs")
+    if tab_g.open:
+        with tab_g:
+            if not gastos_df.empty:
+                avg_g = (gastos_df.groupby("Categoria")["Debitos"].sum() / meses).reset_index(name="Promedio")
+                avg_g = avg_g.sort_values("Promedio")
+                fig = go.Figure(
+                    go.Bar(
+                        y=avg_g["Categoria"],
+                        x=avg_g["Promedio"],
+                        orientation="h",
+                        marker_color=COLOR_GASTO,
+                        text=avg_g["Promedio"].map(_colones),
+                        textposition="outside",
+                        cliponaxis=False,
+                        hovertemplate="%{y}: ₡%{x:,.0f}<extra></extra>",
+                    )
                 )
-            )
-            fig.update_layout(title=f"Promedio de gasto · {meses} mes(es)", height=max(360, 28 * len(avg_g) + 80), **PLOTLY_LAYOUT)
-            st.plotly_chart(fig, width="stretch")
-    with tab_i:
-        if not ingresos_df.empty:
-            avg_i = (ingresos_df.groupby("Categoria")["Creditos"].sum() / meses).reset_index(name="Promedio")
-            avg_i = avg_i.sort_values("Promedio")
-            fig = go.Figure(
-                go.Bar(
-                    y=avg_i["Categoria"],
-                    x=avg_i["Promedio"],
-                    orientation="h",
-                    marker_color=COLOR_INGRESO,
-                    text=avg_i["Promedio"].map(_colones),
-                    textposition="outside",
-                    cliponaxis=False,
-                    hovertemplate="%{y}: ₡%{x:,.0f}<extra></extra>",
+                fig.update_layout(title=f"Promedio de gasto · {meses} mes(es)", height=max(360, 28 * len(avg_g) + 80), **PLOTLY_LAYOUT)
+                st.plotly_chart(fig, width="stretch")
+    if tab_i.open:
+        with tab_i:
+            if not ingresos_df.empty:
+                avg_i = (ingresos_df.groupby("Categoria")["Creditos"].sum() / meses).reset_index(name="Promedio")
+                avg_i = avg_i.sort_values("Promedio")
+                fig = go.Figure(
+                    go.Bar(
+                        y=avg_i["Categoria"],
+                        x=avg_i["Promedio"],
+                        orientation="h",
+                        marker_color=COLOR_INGRESO,
+                        text=avg_i["Promedio"].map(_colones),
+                        textposition="outside",
+                        cliponaxis=False,
+                        hovertemplate="%{y}: ₡%{x:,.0f}<extra></extra>",
+                    )
                 )
+                fig.update_layout(title=f"Promedio de ingreso · {meses} mes(es)", height=max(320, 28 * len(avg_i) + 80), **PLOTLY_LAYOUT)
+                st.plotly_chart(fig, width="stretch")
+    if tab_top.open:
+        with tab_top:
+            top = (
+                gastos_df.groupby("Descripcion", as_index=False)
+                .agg(Veces=("Debitos", "size"), Total=("Debitos", "sum"))
+                .sort_values("Total", ascending=False)
+                .head(15)
             )
-            fig.update_layout(title=f"Promedio de ingreso · {meses} mes(es)", height=max(320, 28 * len(avg_i) + 80), **PLOTLY_LAYOUT)
-            st.plotly_chart(fig, width="stretch")
-    with tab_top:
-        top = (
-            gastos_df.groupby("Descripcion", as_index=False)
-            .agg(Veces=("Debitos", "size"), Total=("Debitos", "sum"))
-            .sort_values("Total", ascending=False)
-            .head(15)
-        )
-        if top.empty:
-            st.info("Sin gastos para ranking de comercios.")
-        else:
-            fig = go.Figure(
-                go.Bar(
-                    y=top["Descripcion"][::-1],
-                    x=top["Total"][::-1],
-                    orientation="h",
-                    marker_color="#334155",
-                    customdata=top["Veces"][::-1],
-                    hovertemplate="%{y}<br>₡%{x:,.0f} · %{customdata} veces<extra></extra>",
+            if top.empty:
+                st.info("Sin gastos para ranking de comercios.")
+            else:
+                fig = go.Figure(
+                    go.Bar(
+                        y=top["Descripcion"][::-1],
+                        x=top["Total"][::-1],
+                        orientation="h",
+                        marker_color="#6B7280",
+                        customdata=top["Veces"][::-1],
+                        hovertemplate="%{y}<br>₡%{x:,.0f} · %{customdata} veces<extra></extra>",
+                    )
                 )
-            )
-            fig.update_layout(title="Top 15 comercios / descripciones", height=520, **PLOTLY_LAYOUT)
-            st.plotly_chart(fig, width="stretch")
+                fig.update_layout(title="Top 15 comercios / descripciones", height=520, **PLOTLY_LAYOUT)
+                st.plotly_chart(fig, width="stretch")
 
     sheet = _apply_chart_filters(filtered, clicked_cats, clicked_months, clicked_types)
     hints = []
@@ -416,17 +424,25 @@ def main() -> None:
 
     otros = filtered[filtered["Categoria"] == CAT_OTROS]
     if not otros.empty:
-        with st.expander(f"Revisar sin clasificar ({len(otros)} movimientos · {_colones(otros['Debitos'].sum())})"):
-            review = (
-                otros.groupby("Descripcion", as_index=False)
-                .agg(Veces=("Descripcion", "size"), Debitos=("Debitos", "sum"), Creditos=("Creditos", "sum"))
-                .sort_values("Veces", ascending=False)
-            )
-            st.dataframe(review, width="stretch", hide_index=True)
-            st.caption("Estas descripciones caen en «Otros». Se pueden agregar reglas en classifier.py.")
+        review_expander = st.expander(
+            f"Revisar sin clasificar ({len(otros)} movimientos · {_colones(otros['Debitos'].sum())})",
+            icon=":material/rule:",
+            key="review_uncategorized",
+            on_change="rerun",
+        )
+        if review_expander.open:
+            with review_expander:
+                review = (
+                    otros.groupby("Descripcion", as_index=False)
+                    .agg(Veces=("Descripcion", "size"), Debitos=("Debitos", "sum"), Creditos=("Creditos", "sum"))
+                    .sort_values("Veces", ascending=False)
+                )
+                st.dataframe(review, width="stretch", hide_index=True)
+                st.caption("Estas descripciones caen en «Otros». Se pueden agregar reglas en classifier.py.")
 
     st.subheader("Detalle de movimientos")
-    show = sheet[["Fecha", "Referencia", "Descripcion", "Categoria", "Tipo", "Debitos", "Creditos", "Balance"]].copy()
+    display_columns = ["Fecha", "Referencia", "Descripcion", "Categoria", "Tipo", "Debitos", "Creditos", "Balance"]
+    show = sheet.reindex(columns=display_columns).copy()
     show["Fecha"] = show["Fecha"].dt.strftime("%d/%m/%Y")
     st.dataframe(
         show,
@@ -436,16 +452,22 @@ def main() -> None:
         column_config={
             "Fecha": st.column_config.TextColumn("Fecha"),
             "Referencia": st.column_config.TextColumn("Referencia"),
-            "Descripcion": st.column_config.TextColumn("Descripción", width="large"),
+            "Descripcion": st.column_config.TextColumn("Descripción", width="large", pinned=True),
             "Categoria": st.column_config.TextColumn("Categoría"),
-            "Debitos": st.column_config.NumberColumn("Débitos", format="compact"),
-            "Creditos": st.column_config.NumberColumn("Créditos", format="compact"),
-            "Balance": st.column_config.NumberColumn("Saldo", format="compact"),
+            "Debitos": st.column_config.NumberColumn("Débitos", format="₡%d"),
+            "Creditos": st.column_config.NumberColumn("Créditos", format="₡%d"),
+            "Balance": st.column_config.NumberColumn("Saldo", format="₡%d"),
         },
     )
 
     csv = show.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("Descargar detalle (CSV)", csv, file_name="movimientos_filtrados.csv", mime="text/csv")
+    st.download_button(
+        "Descargar detalle (CSV)",
+        csv,
+        file_name="movimientos_filtrados.csv",
+        mime="text/csv",
+        icon=":material/download:",
+    )
 
 
 if __name__ == "__main__":
