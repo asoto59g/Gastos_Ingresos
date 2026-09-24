@@ -142,6 +142,17 @@ def _apply_chart_filters(df: pd.DataFrame, cats: set[str], months: set[str], typ
 
 
 def donut(labels, values, title: str) -> go.Figure:
+    layout = PLOTLY_LAYOUT | {
+        "height": 500,
+        "margin": dict(l=8, r=8, t=48, b=150),
+        "legend": dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.34,
+            xanchor="center",
+            x=0.5,
+        ),
+    }
     fig = go.Figure(
         go.Pie(
             labels=labels,
@@ -152,7 +163,7 @@ def donut(labels, values, title: str) -> go.Figure:
             hovertemplate="%{label}<br>₡%{value:,.0f}<br>%{percent}<extra></extra>",
         )
     )
-    fig.update_layout(title=title, **PLOTLY_LAYOUT)
+    fig.update_layout(title=title, **layout)
     return fig
 
 
