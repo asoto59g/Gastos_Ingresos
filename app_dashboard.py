@@ -17,7 +17,7 @@ from classifier import (
 )
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_EXCEL = ROOT / "Gastos_Ingresos.xlsx"
+DEFAULT_EXCEL = ROOT / "Transacciones_Sinteticas_1000_6Meses.xlsx"
 
 st.set_page_config(
     page_title="Gastos e ingresos",
