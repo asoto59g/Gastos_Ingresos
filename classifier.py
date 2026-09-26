@@ -27,6 +27,12 @@ CAT_COMISIONES = "Comisiones bancarias / IVA"
 CAT_TRANSFERENCIAS = "Transferencias / SINPE"
 CAT_OTROS = "Otros servicios y gastos"
 
+# Subcategorías de Alimentación
+SUB_ALIMENTACION_RESTAURANTES = "Alimentación: Restaurantes"
+SUB_ALIMENTACION_SUPERMERCADOS = "Alimentación: Supermercados"
+SUB_ALIMENTACION_CARNICERIAS = "Alimentación: Carnicerías"
+SUB_ALIMENTACION_PANADERIAS = "Alimentación: Panaderías"
+
 
 def normalize_text(value: object) -> str:
     text = "" if value is None else str(value)
@@ -61,6 +67,131 @@ _INCOME_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         INGRESO_IMPUESTOS,
         ("impuesto", "reintegro"),
+    ),
+)
+
+# Subcategorías de Alimentación: se evalúan antes de las categorías principales
+_ALIMENTACION_SUBCATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        SUB_ALIMENTACION_RESTAURANTES,
+        (
+            "burger",
+            "bar ",
+            "taco",
+            "tacos",
+            "kfc",
+            "uber eats",
+            "pops",
+            "restaurante",
+            "restaurant",
+            "soda",
+            "ceviche",
+            "chicharronera",
+            "pizza",
+            "mc donald",
+            "pollos",
+            "pollo ",
+            "pedidos ya",
+            "pedido",
+            "comida",
+            "marsiqueria",
+            "marisqueria",
+            "marisco",
+            "subway",
+            "tramo",
+            "batido",
+            "casado",
+            "cadados",
+            "dos gallos",
+            "gallo carne",
+            "gallito",
+            "carne curry",
+            "carnes asadas",
+            "dowling",
+            "copo",
+            "chopsuey",
+            "chop suey",
+            "chowmin",
+            "chow min",
+            "shopsuey",
+            "chalupa",
+            "pizzeria",
+            "churros",
+            "coffee bar",
+            "bocadito",
+            "olla de barro",
+            "mico rico",
+            "palenque",
+            "cocina criolla",
+            "pampero",
+        ),
+    ),
+    (
+        SUB_ALIMENTACION_SUPERMERCADOS,
+        (
+            "minisuper",
+            "mini super",
+            "supermercado",
+            "compre bien",
+            "super todo",
+            "mega super",
+            "maxipali",
+            "mxm ",
+            "jsm market",
+            "kiosco",
+            "gessa",
+            "bolpa",
+            "musmanni",
+            "country house",
+            "chaparrastique",
+            "del valle",
+            "cuatro mares",
+            "4 mares",
+            "pequeno arbol",
+            "auto mercado",
+            "walmart",
+            "perimercado",
+            "super compro",
+            "quickshop",
+            "ue *costa",
+            "del vall",
+        ),
+    ),
+    (
+        SUB_ALIMENTACION_CARNICERIAS,
+        (
+            "carniceria",
+            "cerdo",
+            "arroz",
+            "camaron",
+            "langosta",
+            "pepa",
+            "pina de tamal",
+            "crema",
+            "queso",
+            "cuajada",
+            "miel",
+            "naranja",
+            "naranjo",
+            "limon",
+            "limones",
+            "fajitas",
+            "pipasa",
+        ),
+    ),
+    (
+        SUB_ALIMENTACION_PANADERIAS,
+        (
+            "panaderia",
+            "heladeria",
+            "cafeteria",
+            "biscocheria",
+            "patacon",
+            "guacamole",
+            "casa almendro",
+            "hacienda la pacifica",
+            "sr patacon",
+        ),
     ),
 )
 
@@ -105,7 +236,7 @@ _EXPENSE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         CAT_LOTERIA,
-        ("jps", "junta proteccion", "pago rifa", "rifa", "chance"),
+        ("jps", "junta proteccion", "pago rifa", "rifa", "chances", "chance"),
     ),
     (
         CAT_DIGITAL,
@@ -131,6 +262,7 @@ _EXPENSE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "sortlek",
             "windy",
             "uav forecast",
+            "bateria",
         ),
     ),
     (
@@ -184,6 +316,7 @@ _EXPENSE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "sinpe movil gas",
             "sinpe movil frenos",
             "bici",
+            "bqr000",
         ),
     ),
     (
@@ -303,6 +436,22 @@ _EXPENSE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "hacienda la pacifica",
             "ue *costa",
             "del vall",
+            "tacos",
+            "cuajada",
+            "gallos",
+            "tamales",
+            "miel",
+            "chow_min",
+            "chowmin",
+            "comida",
+            "frescos",
+            "tamal",
+            "mangos",
+            "limones",
+            "carne",
+            "vigorones",
+            "gallito",
+            "downling",
         ),
     ),
     (
@@ -380,9 +529,14 @@ def classify_transaction(descripcion: object, debitos: float, creditos: float) -
                 return category
         return INGRESO_OTROS
 
+    # Primero verificar subcategorías de alimentación
+    for subcategory, keywords in _ALIMENTACION_SUBCATEGORIES:
+        if _matches(text, keywords):
+            return subcategory
+
     # Hotel con restaurante es comida, no hospedaje.
     if "restaurant" in text:
-        return CAT_ALIMENTACION
+        return SUB_ALIMENTACION_RESTAURANTES
 
     for category, keywords in _EXPENSE_RULES:
         if _matches(text, keywords):

@@ -6,7 +6,15 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from classifier import CAT_EFECTIVO, CAT_OTROS, classify_transaction
+from classifier import (
+    CAT_EFECTIVO,
+    CAT_OTROS,
+    SUB_ALIMENTACION_CARNICERIAS,
+    SUB_ALIMENTACION_PANADERIAS,
+    SUB_ALIMENTACION_RESTAURANTES,
+    SUB_ALIMENTACION_SUPERMERCADOS,
+    classify_transaction,
+)
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_EXCEL = ROOT / "Gastos_Ingresos.xlsx"
@@ -36,6 +44,7 @@ DONUT_COLORS = ["#2563EB", "#059669", "#7C3AED", "#DC2626", "#D97706", "#0891B2"
 
 
 def _norm_col(name: object) -> str:
+    """Normaliza cadenas eliminando acentos, espacios extra y caracteres especiales."""
     text = unicodedata.normalize("NFKD", str(name))
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     return text.lower().replace("*", "").strip()
@@ -43,6 +52,52 @@ def _norm_col(name: object) -> str:
 
 def _colones(value: float) -> str:
     return f"₡{value:,.0f}"
+
+
+def _clean_numeric_val(v) -> float:
+    """
+    Limpia y convierte un valor numérico soportando formato latino (750.000,00)
+    e internacional (750,000.00).
+    """
+    if pd.isna(v):
+        return 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).replace("₡", "").replace("$", "").strip()
+    if not s or s.lower() in ["nan", "none", "null", "-"]:
+        return 0.0
+    
+    if "," in s and "." in s:
+        if s.find(".") < s.find(","):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s and "." not in s:
+        parts = s.split(",")
+        if len(parts[-1]) == 2:
+            s = s.replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "." in s and "," not in s:
+        parts = s.split(".")
+        if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):
+            s = s.replace(".", "")
+
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def _clean_numeric_series(series: pd.Series) -> pd.Series:
+    return series.apply(_clean_numeric_val)
+
+
+def _normalize_category_for_display(category: str) -> str:
+    """Normaliza las subcategorías de alimentación para mostrarlas como 'Alimentación' en gráficos."""
+    if isinstance(category, str) and category.startswith("Alimentación:"):
+        return "Alimentación"
+    return str(category)
 
 
 @st.cache_data(show_spinner="Leyendo movimientos…", max_entries=4)
@@ -54,37 +109,76 @@ def load_transactions(file_bytes: bytes, filename: str) -> pd.DataFrame:
         df = pd.read_excel(buffer)
     df = df.dropna(axis=1, how="all")
 
+    cols_norm = {col: _norm_col(col) for col in df.columns}
     rename = {}
-    for col in df.columns:
-        key = _norm_col(col)
-        if key.startswith("fecha"):
+    
+    # 1. Identificar Fecha
+    for col, key in cols_norm.items():
+        if any(t in key for t in ["fecha", "date"]):
             rename[col] = "Fecha"
-        elif key.startswith("referencia"):
-            rename[col] = "Referencia"
-        elif key.startswith("descripcion"):
+            break
+            
+    # 2. Identificar Descripción
+    for col, key in cols_norm.items():
+        if any(t in key for t in ["descripcion", "detalle", "concepto", "leyenda", "movimiento"]):
             rename[col] = "Descripcion"
-        elif key.startswith("debito"):
-            rename[col] = "Debitos"
-        elif key.startswith("credito"):
-            rename[col] = "Creditos"
-        elif key.startswith("balance"):
+            break
+
+    # 3. Identificar Referencia y Balance
+    for col, key in cols_norm.items():
+        if any(t in key for t in ["referencia", "ref", "comprobante", "voucher"]):
+            rename[col] = "Referencia"
+        elif any(t in key for t in ["balance", "saldo"]):
             rename[col] = "Balance"
+
+    # 4. Identificar Débitos, Créditos o Columna Única de Monto
+    deb_col = None
+    cred_col = None
+    monto_col = None
+
+    for col, key in cols_norm.items():
+        if any(t in key for t in ["debito", "egreso", "gasto", "debit", "salida", "cargo"]):
+            deb_col = col
+        elif any(t in key for t in ["credito", "ingres", "credit", "abono", "deposito", "entrada"]):
+            cred_col = col
+        elif any(t in key for t in ["monto", "importe", "valor", "amount"]) and not deb_col and not cred_col:
+            monto_col = col
+
+    if deb_col:
+        rename[deb_col] = "Debitos"
+    if cred_col:
+        rename[cred_col] = "Creditos"
+
     df = df.rename(columns=rename)
 
-    required = ["Fecha", "Descripcion", "Debitos", "Creditos"]
+    # Si hay una sola columna "Monto" o similar y no venían "Debitos"/"Creditos" separados
+    if "Debitos" not in df.columns and "Creditos" not in df.columns and monto_col:
+        monto_vals = _clean_numeric_series(df[monto_col])
+        df["Debitos"] = monto_vals.apply(lambda x: abs(x) if x < 0 else 0.0)
+        df["Creditos"] = monto_vals.apply(lambda x: abs(x) if x > 0 else 0.0)
+
+    if "Debitos" not in df.columns:
+        df["Debitos"] = 0.0
+    if "Creditos" not in df.columns:
+        df["Creditos"] = 0.0
+
+    required = ["Fecha", "Descripcion"]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(
             f"Columnas faltantes en {filename}: {', '.join(missing)}. "
-            "Se esperan Fecha, Descripción, Débitos y Créditos."
+            "Se esperan al menos Fecha y Descripción."
         )
 
     df = df.dropna(subset=["Fecha"])
     df["Fecha"] = pd.to_datetime(df["Fecha"], dayfirst=True, errors="coerce")
     df = df.dropna(subset=["Fecha"])
     df["Descripcion"] = df["Descripcion"].fillna("").astype(str).str.strip()
-    df["Debitos"] = pd.to_numeric(df["Debitos"], errors="coerce").fillna(0.0)
-    df["Creditos"] = pd.to_numeric(df["Creditos"], errors="coerce").fillna(0.0)
+
+    # Limpieza numérica de Débitos y Créditos
+    df["Debitos"] = _clean_numeric_series(df["Debitos"]).abs()
+    df["Creditos"] = _clean_numeric_series(df["Creditos"]).abs()
+
     if "Referencia" not in df.columns:
         df["Referencia"] = ""
     if "Balance" not in df.columns:
@@ -93,11 +187,18 @@ def load_transactions(file_bytes: bytes, filename: str) -> pd.DataFrame:
     df["Referencia"] = df["Referencia"].fillna("").astype(str).str.strip()
     df["Balance"] = pd.to_numeric(df["Balance"], errors="coerce")
 
+    # Clasificación por reglas
     df["Categoria"] = [
         classify_transaction(desc, debit, credit)
         for desc, debit, credit in zip(df["Descripcion"], df["Debitos"], df["Creditos"])
     ]
-    df["Tipo"] = ["Ingreso" if c > d else "Gasto" for d, c in zip(df["Debitos"], df["Creditos"])]
+    
+    # Asignación de Tipo garantizada: Ingreso si Créditos > 0 y Créditos > Débitos
+    df["Tipo"] = [
+        "Ingreso" if c > 0 and c > d else ("Gasto" if d > 0 else ("Ingreso" if c > 0 else "Gasto"))
+        for d, c in zip(df["Debitos"], df["Creditos"])
+    ]
+    
     df["Monto"] = df[["Debitos", "Creditos"]].max(axis=1)
     df["Mes"] = df["Fecha"].dt.to_period("M").astype(str)
     return df.sort_values("Fecha").reset_index(drop=True)
@@ -131,7 +232,18 @@ def _chart_points(event) -> list[dict]:
 def _apply_chart_filters(df: pd.DataFrame, cats: set[str], months: set[str], types: set[str]) -> pd.DataFrame:
     out = df
     if cats:
-        out = out[out["Categoria"].isin(cats)]
+        # Si se selecciona "Alimentación", incluir todas sus subcategorías
+        if "Alimentación" in cats:
+            alimentacion_subs = [
+                SUB_ALIMENTACION_RESTAURANTES,
+                SUB_ALIMENTACION_SUPERMERCADOS,
+                SUB_ALIMENTACION_CARNICERIAS,
+                SUB_ALIMENTACION_PANADERIAS,
+            ]
+            cats_with_subs = cats.union(set(alimentacion_subs))
+            out = out[out["Categoria"].isin(cats_with_subs)]
+        else:
+            out = out[out["Categoria"].isin(cats)]
     if months:
         out = out[out["Mes"].isin(months)]
     if types == {"Gasto"}:
@@ -215,7 +327,6 @@ def main() -> None:
         buscar = st.text_input(
             "Buscar en descripción",
             placeholder="Ej. Uber, JPS, SINPE…",
-            type="search",
             key="description_search",
         )
         categorias = sorted(df["Categoria"].unique())
@@ -296,11 +407,18 @@ def main() -> None:
 
     gastos_df = filtered[filtered["Tipo"] == "Gasto"]
     ingresos_df = filtered[filtered["Tipo"] == "Ingreso"]
+    
+    # Normalizar categorías para gráficos (subcategorías de alimentación se agrupan)
+    gastos_df_copy = gastos_df.copy()
+    gastos_df_copy["Categoria_Display"] = gastos_df_copy["Categoria"].apply(_normalize_category_for_display)
     gastos_cat = (
-        gastos_df.groupby("Categoria", as_index=False)["Debitos"].sum().sort_values("Debitos", ascending=False)
+        gastos_df_copy.groupby("Categoria_Display", as_index=False)["Debitos"].sum().sort_values("Debitos", ascending=False)
     )
+    
+    ingresos_df_copy = ingresos_df.copy()
+    ingresos_df_copy["Categoria_Display"] = ingresos_df_copy["Categoria"].apply(_normalize_category_for_display)
     ingresos_cat = (
-        ingresos_df.groupby("Categoria", as_index=False)["Creditos"].sum().sort_values("Creditos", ascending=False)
+        ingresos_df_copy.groupby("Categoria_Display", as_index=False)["Creditos"].sum().sort_values("Creditos", ascending=False)
     )
 
     left, right = st.columns(2)
@@ -308,7 +426,7 @@ def main() -> None:
     with left:
         with st.container(border=True):
             if not gastos_cat.empty:
-                fig_g = donut(gastos_cat["Categoria"], gastos_cat["Debitos"], "Gastos por categoría")
+                fig_g = donut(gastos_cat["Categoria_Display"], gastos_cat["Debitos"], "Gastos por categoría")
                 ev_g = st.plotly_chart(fig_g, width="stretch", on_select="rerun", key="pie_gastos", selection_mode="points")
                 for point in _chart_points(ev_g):
                     if point.get("label"):
@@ -318,7 +436,7 @@ def main() -> None:
     with right:
         with st.container(border=True):
             if not ingresos_cat.empty:
-                fig_i = donut(ingresos_cat["Categoria"], ingresos_cat["Creditos"], "Ingresos por categoría")
+                fig_i = donut(ingresos_cat["Categoria_Display"], ingresos_cat["Creditos"], "Ingresos por categoría")
                 ev_i = st.plotly_chart(fig_i, width="stretch", on_select="rerun", key="pie_ingresos", selection_mode="points")
                 for point in _chart_points(ev_i):
                     if point.get("label"):
@@ -363,11 +481,11 @@ def main() -> None:
     if tab_g.open:
         with tab_g:
             if not gastos_df.empty:
-                avg_g = (gastos_df.groupby("Categoria")["Debitos"].sum() / meses).reset_index(name="Promedio")
+                avg_g = (gastos_df_copy.groupby("Categoria_Display")["Debitos"].sum() / meses).reset_index(name="Promedio")
                 avg_g = avg_g.sort_values("Promedio")
                 fig = go.Figure(
                     go.Bar(
-                        y=avg_g["Categoria"],
+                        y=avg_g["Categoria_Display"],
                         x=avg_g["Promedio"],
                         orientation="h",
                         marker_color=COLOR_GASTO,
@@ -382,11 +500,11 @@ def main() -> None:
     if tab_i.open:
         with tab_i:
             if not ingresos_df.empty:
-                avg_i = (ingresos_df.groupby("Categoria")["Creditos"].sum() / meses).reset_index(name="Promedio")
+                avg_i = (ingresos_df_copy.groupby("Categoria_Display")["Creditos"].sum() / meses).reset_index(name="Promedio")
                 avg_i = avg_i.sort_values("Promedio")
                 fig = go.Figure(
                     go.Bar(
-                        y=avg_i["Categoria"],
+                        y=avg_i["Categoria_Display"],
                         x=avg_i["Promedio"],
                         orientation="h",
                         marker_color=COLOR_INGRESO,
@@ -420,6 +538,40 @@ def main() -> None:
                     )
                 )
                 fig.update_layout(title="Top 15 comercios / descripciones", height=520, **PLOTLY_LAYOUT)
+                st.plotly_chart(fig, width="stretch")
+
+    # Desglose de subcategorías de Alimentación
+    alimentacion_subs = [
+        SUB_ALIMENTACION_RESTAURANTES,
+        SUB_ALIMENTACION_SUPERMERCADOS,
+        SUB_ALIMENTACION_CARNICERIAS,
+        SUB_ALIMENTACION_PANADERIAS,
+    ]
+    gastos_alimentacion = gastos_df[gastos_df["Categoria"].isin(alimentacion_subs)]
+    if not gastos_alimentacion.empty:
+        st.subheader("Desglose de Alimentación")
+        subcat_avg = (gastos_alimentacion.groupby("Categoria")["Debitos"].sum() / meses).reset_index(name="Promedio")
+        subcat_avg = subcat_avg.sort_values("Promedio")
+        if not subcat_avg.empty:
+            # Asegurar que la columna existe
+            if "Categoria" in subcat_avg.columns:
+                fig = go.Figure(
+                    go.Bar(
+                        y=subcat_avg["Categoria"],
+                        x=subcat_avg["Promedio"],
+                        orientation="h",
+                        marker_color="#DC2626",
+                        text=subcat_avg["Promedio"].map(_colones),
+                        textposition="outside",
+                        cliponaxis=False,
+                        hovertemplate="%{y}: ₡%{x:,.0f}<extra></extra>",
+                    )
+                )
+                fig.update_layout(
+                    title=f"Promedio mensual de Alimentación por subcategoría · {meses} mes(es)",
+                    height=max(280, 28 * len(subcat_avg) + 80),
+                    **PLOTLY_LAYOUT,
+                )
                 st.plotly_chart(fig, width="stretch")
 
     sheet = _apply_chart_filters(filtered, clicked_cats, clicked_months, clicked_types)
