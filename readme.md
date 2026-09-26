@@ -60,7 +60,7 @@ Columnas opcionales:
 
 ## Datos privados
 
-Los extractos bancarios y archivos auxiliares locales no deben subirse al repositorio. La app funciona con carga manual desde la barra lateral o con un archivo local llamado `Gastos_Ingresos.xlsx`.
+Los extractos bancarios y archivos auxiliares locales no deben subirse al repositorio. La app funciona con carga manual desde la barra lateral o con un archivo local llamado `Transacciones_Sinteticas_1000_6Meses.xlsx`.
 
 Si necesitas compartir el proyecto, comparte solo el código y deja los datos fuera de Git.
 
