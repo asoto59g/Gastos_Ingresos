@@ -98,3 +98,5 @@ Los gráficos principales muestran "Alimentación" como una categoría unificada
   - Reglas de clasificación específicas para cada subcategoría
   - Actualización de `app_dashboard.py` para mostrar desglose de subcategorías
   - Cálculo de promedio mensual por subcategoría en lugar de acumulado del periodo
+  - Corrección de formato de line endings para compatibilidad con Streamlit Cloud
+  - Actualización: redeploy forzado para corregir error de importación

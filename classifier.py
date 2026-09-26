@@ -1,5 +1,6 @@
 """Reglas de clasificación de movimientos bancarios (colones, Costa Rica)."""
 
+# v1.1 - Subcategorías de Alimentación implementadas
 from __future__ import annotations
 
 import unicodedata
